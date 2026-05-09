@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ─── Flask Keep-Alive (for Replit / hosting platforms) ───────────────────────
+# ─── Flask Keep-Alive ─────────────────────────────────────────────────────────
 flask_app = Flask(__name__)
 
 @flask_app.route("/")
@@ -26,7 +26,6 @@ def home():
     return "Bot is running!"
 
 def keep_alive():
-    """Start Flask in a background daemon thread to keep the host alive."""
     def run():
         port = int(os.environ.get("PORT", 8080))
         try:
@@ -35,23 +34,45 @@ def keep_alive():
             logger.warning("Web server could not start on port %d: %s", port, e)
     Thread(target=run, daemon=True).start()
 
-# ─── URL Detection ────────────────────────────────────────────────────────────
-YOUTUBE_PATTERN = re.compile(
-    r"(https?://)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)"
-    r"/(watch\?v=|shorts/|embed/|v/|.+\?v=)?([a-zA-Z0-9_-]{11})|"
-    r"(https?://)?(www\.)?youtu\.be/[a-zA-Z0-9_-]{11}",
-    re.IGNORECASE
-)
-INSTAGRAM_PATTERN = re.compile(
-    r"(https?://)?(www\.)?instagram\.com/(p|reel|tv|reels)/[a-zA-Z0-9_-]+",
-    re.IGNORECASE
-)
+# ─── Platform Detection ───────────────────────────────────────────────────────
+PLATFORMS = {
+    "YouTube":   re.compile(
+        r"(https?://)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)"
+        r"/(watch\?v=|shorts/|embed/|v/|.+\?v=)?[a-zA-Z0-9_-]|"
+        r"(https?://)?(www\.)?youtu\.be/[a-zA-Z0-9_-]",
+        re.IGNORECASE
+    ),
+    "Instagram": re.compile(
+        r"(https?://)?(www\.)?instagram\.com/(p|reel|tv|reels)/[a-zA-Z0-9_-]+",
+        re.IGNORECASE
+    ),
+    "TikTok":    re.compile(
+        r"(https?://)?(www\.|vm\.)?tiktok\.com/",
+        re.IGNORECASE
+    ),
+    "Twitter/X": re.compile(
+        r"(https?://)?(www\.)?(twitter\.com|x\.com)/\w+/status/\d+",
+        re.IGNORECASE
+    ),
+    "Facebook":  re.compile(
+        r"(https?://)?(www\.|web\.|m\.)?facebook\.com/.+/videos?/|"
+        r"(https?://)?fb\.watch/",
+        re.IGNORECASE
+    ),
+}
 
-def detect_platform(url: str) -> str | None:
-    if YOUTUBE_PATTERN.search(url):
-        return "youtube"
-    if INSTAGRAM_PATTERN.search(url):
-        return "instagram"
+PLATFORM_EMOJI = {
+    "YouTube":   "▶️",
+    "Instagram": "📸",
+    "TikTok":    "🎵",
+    "Twitter/X": "🐦",
+    "Facebook":  "📘",
+}
+
+def detect_platform(text: str) -> str | None:
+    for name, pattern in PLATFORMS.items():
+        if pattern.search(text):
+            return name
     return None
 
 def is_valid_url(text: str) -> bool:
@@ -60,12 +81,15 @@ def is_valid_url(text: str) -> bool:
 # ─── Command Handlers ─────────────────────────────────────────────────────────
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "👋 *Welcome to File Downloader Bot!*\n\n"
+        "👋 *Welcome to Video Downloader Bot!*\n\n"
         "I can download videos from:\n"
         "▶️ *YouTube* — videos, shorts & music\n"
-        "📸 *Instagram* — reels, posts & IGTV\n\n"
+        "📸 *Instagram* — reels, posts & IGTV\n"
+        "🎵 *TikTok* — videos\n"
+        "🐦 *Twitter / X* — videos & GIFs\n"
+        "📘 *Facebook* — videos & reels\n\n"
         "📌 *How to use:*\n"
-        "Simply send me a link and I'll download and send the video back to you!\n\n"
+        "Simply send me a link and I'll download it for you!\n\n"
         "⚠️ *Limits:*\n"
         "• Max file size: 50 MB\n"
         "• Only public videos can be downloaded\n\n"
@@ -79,13 +103,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start — Show welcome message\n"
         "/help — Show this help\n\n"
         "*Supported platforms:*\n"
-        "• YouTube (youtube.com, youtu.be, shorts)\n"
-        "• Instagram (reels, posts, IGTV)\n\n"
+        "• YouTube, YouTube Shorts, YouTube Music\n"
+        "• Instagram (reels, posts, IGTV)\n"
+        "• TikTok\n"
+        "• Twitter / X\n"
+        "• Facebook videos\n\n"
+        "*Instagram / Facebook not downloading?*\n"
+        "Add a `cookies.txt` file in the bot folder.\n"
+        "Use the *'Get cookies.txt LOCALLY'* Chrome extension,\n"
+        "log into Instagram, export cookies, and place the file next to `main.py`.\n\n"
         "*Troubleshooting:*\n"
         "• Make sure the video is public\n"
         "• Verify the link is correct\n"
         "• Some videos may be region-locked\n"
-        "• File must be under 50 MB to be sent\n",
+        "• File must be under 50 MB\n",
         parse_mode="Markdown"
     )
 
@@ -97,30 +128,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not is_valid_url(user_text):
         await update.message.reply_text(
-            "❌ *Invalid or unsupported link!*\n\n"
-            "Please send a valid YouTube or Instagram URL.\n\n"
-            "Examples:\n"
-            "• https://youtube.com/watch?v=...\n"
-            "• https://youtu.be/...\n"
-            "• https://youtube.com/shorts/...\n"
-            "• https://instagram.com/reel/...",
+            "❌ *Unsupported link!*\n\n"
+            "Supported platforms:\n"
+            "• YouTube / Shorts\n"
+            "• Instagram (reel, post, IGTV)\n"
+            "• TikTok\n"
+            "• Twitter / X\n"
+            "• Facebook\n\n"
+            "Send /help for more info.",
             parse_mode="Markdown"
         )
         return
 
     platform = detect_platform(user_text)
-    platform_emoji = "▶️" if platform == "youtube" else "📸"
-    platform_name  = "YouTube" if platform == "youtube" else "Instagram"
+    emoji    = PLATFORM_EMOJI.get(platform, "📥")
 
     status_msg = await update.message.reply_text(
-        f"{platform_emoji} *Downloading from {platform_name}...*\n\n"
+        f"{emoji} *Downloading from {platform}...*\n\n"
         "⏳ Please wait, this may take a moment.",
         parse_mode="Markdown"
     )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
-            loop = asyncio.get_event_loop()
+            loop       = asyncio.get_event_loop()
             video_path = await loop.run_in_executor(None, download_video, user_text, tmp_dir)
 
             if video_path is None or not os.path.exists(video_path):
@@ -129,7 +160,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "Could not download this content. It may be:\n"
                     "• Private or age-restricted\n"
                     "• Region-locked\n"
-                    "• No longer available",
+                    "• No longer available\n\n"
+                    "For Instagram/Facebook, add `cookies.txt` — see /help",
                     parse_mode="Markdown"
                 )
                 return
@@ -139,18 +171,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if is_too_large(video_path):
                 await status_msg.edit_text(
                     f"⚠️ *File too large to send!*\n\n"
-                    f"The video is *{file_size_mb:.1f} MB*, which exceeds "
-                    f"Telegram's 50 MB bot limit.\n\n"
-                    "Please try a shorter video.",
+                    f"Video is *{file_size_mb:.1f} MB* (limit: 50 MB).\n"
+                    "Please try a shorter clip.",
                     parse_mode="Markdown"
                 )
                 return
 
-            await status_msg.edit_text("📤 *Uploading video to Telegram...*", parse_mode="Markdown")
+            await status_msg.edit_text("📤 *Uploading to Telegram...*", parse_mode="Markdown")
 
-            with open(video_path, "rb") as video_file:
+            with open(video_path, "rb") as vf:
                 await update.message.reply_video(
-                    video=video_file,
+                    video=vf,
                     caption=f"✅ Done! ({file_size_mb:.1f} MB)",
                     supports_streaming=True,
                     read_timeout=120,
@@ -161,17 +192,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await status_msg.delete()
 
         except yt_dlp.utils.DownloadError as e:
-            error_str = str(e).lower()
-            if any(kw in error_str for kw in ["private", "login", "sign in"]):
-                msg = "🔒 *Private content!*\n\nThis video is private or requires login."
-            elif any(kw in error_str for kw in ["not available", "removed", "deleted"]):
-                msg = "🚫 *Content unavailable!*\n\nThis video has been removed or is unavailable."
-            elif any(kw in error_str for kw in ["geo", "region", "country"]):
-                msg = "🌍 *Region-locked!*\n\nThis video is not available in the server's region."
+            err = str(e).lower()
+            if any(k in err for k in ["private", "login", "sign in", "cookie"]):
+                msg = (
+                    "🔒 *Login required!*\n\n"
+                    "This content needs authentication.\n"
+                    "Add `cookies.txt` to the bot folder — see /help"
+                )
+            elif any(k in err for k in ["not available", "removed", "deleted"]):
+                msg = "🚫 *Content unavailable!*\n\nThis video has been removed."
+            elif any(k in err for k in ["geo", "region", "country"]):
+                msg = "🌍 *Region-locked!*\n\nNot available in this server's region."
             else:
                 msg = (
                     "❌ *Cannot download this content.*\n\n"
-                    "The video may be private, blocked, or unavailable.\n"
+                    f"`{str(e)[:200]}`\n\n"
                     "Try /help for troubleshooting tips."
                 )
             await status_msg.edit_text(msg, parse_mode="Markdown")
@@ -179,8 +214,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         except Exception as e:
             await status_msg.edit_text(
-                "⚠️ *Something went wrong!*\n\n"
-                "An unexpected error occurred. Please try again later.",
+                "⚠️ *Something went wrong!*\n\nPlease try again later.",
                 parse_mode="Markdown"
             )
             logger.error("Unexpected error for %s: %s", user_text, e, exc_info=True)
@@ -189,20 +223,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def main() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is not set. "
-            "Add it as an environment variable or in a .env file."
-        )
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
 
     keep_alive()
-    logger.info("Starting File Downloader Bot...")
+    logger.info("Starting Video Downloader Bot...")
 
     bot_app = ApplicationBuilder().token(token).build()
     bot_app.add_handler(CommandHandler("start", start_command))
     bot_app.add_handler(CommandHandler("help", help_command))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot is running! Send /start in Telegram to begin.")
+    logger.info("Bot is running!")
     bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
