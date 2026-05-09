@@ -1,53 +1,45 @@
-# 🔧 Instagram / Facebook ಡೌನ್ಲೋಡ್ ಆಗದಿದ್ದರೆ — Fix Guide
+# 📸 Instagram Fix — Render Deployment
 
-Instagram ಮತ್ತು Facebook ವಿಡಿಯೋ ಡೌನ್ಲೋಡ್ ಮಾಡಲು **cookies.txt** ಫೈಲ್ ಬೇಕು.
+Instagram ಡೌನ್ಲೋಡ್ ಮಾಡಲು `INSTAGRAM_COOKIES` environment variable set ಮಾಡಬೇಕು.
 
 ---
 
-## Steps (ಕನ್ನಡದಲ್ಲಿ)
+## Step 1 — Chrome Extension Install ಮಾಡಿ
+Chrome Web Store ನಲ್ಲಿ: **"Get cookies.txt LOCALLY"** install ಮಾಡಿ.
 
-### Step 1 — Chrome Extension ಇನ್ಸ್ಟಾಲ್ ಮಾಡಿ
-Chrome Web Store ನಲ್ಲಿ ಹುಡುಕಿ:
-👉 **"Get cookies.txt LOCALLY"**
-ಅದನ್ನು install ಮಾಡಿ.
-
-### Step 2 — Instagram ಗೆ Login ಮಾಡಿ
-Chrome ನಲ್ಲಿ [instagram.com](https://instagram.com) ಗೆ ಹೋಗಿ, ನಿಮ್ಮ account ನಲ್ಲಿ login ಮಾಡಿ.
-
-### Step 3 — Cookies Export ಮಾಡಿ
-1. Extension icon ಕ್ಲಿಕ್ ಮಾಡಿ
-2. "Export" ಅಥವಾ download button ಕ್ಲಿಕ್ ಮಾಡಿ
+## Step 2 — Instagram Cookies Export ಮಾಡಿ
+1. Chrome ನಲ್ಲಿ `instagram.com` ಗೆ ಹೋಗಿ, login ಮಾಡಿ
+2. Extension icon ಕ್ಲಿಕ್ ಮಾಡಿ → **"Export"** ಕ್ಲಿಕ್ ಮಾಡಿ
 3. `cookies.txt` ಎಂದು save ಮಾಡಿ
 
-### Step 4 — Bot Folder ಗೆ Copy ಮಾಡಿ
-`cookies.txt` ಫೈಲ್ ಅನ್ನು `main.py` ಇರುವ folder ಗೆ paste ಮಾಡಿ:
-```
-reels_bot_clean/
-├── main.py
-├── downloader.py
-├── requirements.txt
-└── cookies.txt   ← ಇಲ್ಲಿ ಇಡಿ
-```
+## Step 3 — Base64 ಆಗಿ Convert ಮಾಡಿ
 
-### Step 5 — Bot Restart ಮಾಡಿ
+**Linux / Mac (Terminal):**
 ```bash
-python main.py
+base64 -w 0 cookies.txt
 ```
 
+**Windows (PowerShell):**
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("cookies.txt"))
+```
+
+Output ಅನ್ನು copy ಮಾಡಿ (ಉದ್ದವಾದ text ಬರುತ್ತದೆ).
+
+## Step 4 — Render Dashboard ನಲ್ಲಿ Set ಮಾಡಿ
+1. [render.com](https://render.com) → ನಿಮ್ಮ bot service ಗೆ ಹೋಗಿ
+2. **Environment** tab ಕ್ಲಿಕ್ ಮಾಡಿ
+3. **Add Environment Variable:**
+   - Key: `INSTAGRAM_COOKIES`
+   - Value: *(Step 3 ನ base64 text paste ಮಾಡಿ)*
+4. **Save** → Service ಆಟೋಮ್ಯಾಟಿಕ್ ಆಗಿ redeploy ಆಗುತ್ತದೆ
+
+## Step 5 — Test ಮಾಡಿ
+Bot ಗೆ Instagram reel link ಕಳಿಸಿ — ಈಗ ಡೌನ್ಲೋಡ್ ಆಗಬೇಕು!
+
 ---
 
-## ⚠️ ಗಮನಿಸಿ
-- `cookies.txt` ಅನ್ನು GitHub ಗೆ push ಮಾಡಬೇಡಿ (`.gitignore` ನಲ್ಲಿ add ಮಾಡಿ)
-- Cookies expire ಆಗಬಹುದು — ಆದರೆ ಮತ್ತೆ export ಮಾಡಿ
-- YouTube ಗೆ cookies ಇಲ್ಲದೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ
-
----
-
-## Supported Platforms (cookies ಇಲ್ಲದೆ)
-✅ YouTube, YouTube Shorts, YouTube Music
-✅ TikTok (public videos)
-✅ Twitter / X (public tweets)
-
-## Supported Platforms (cookies ಬೇಕು)
-🔒 Instagram Reels, Posts, IGTV
-🔒 Facebook Videos
+## ⚠️ Important
+- `cookies.txt` ಅನ್ನು **GitHub ಗೆ push ಮಾಡಬೇಡಿ** — private ಆಗಿರಿಸಿ
+- Cookies expire ಆದರೆ, ಮತ್ತೆ Step 2-4 repeat ಮಾಡಿ
+- YouTube / TikTok / Twitter ಗೆ cookies ಬೇಕಿಲ್ಲ ✅

@@ -1,16 +1,37 @@
 import os
+import base64
+import tempfile
 import yt_dlp
 
 MAX_FILE_SIZE_MB    = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
-
-# Platforms that need cookies to download (login-walled)
-COOKIE_REQUIRED_PLATFORMS = {"Instagram", "Facebook"}
+# Platforms that use cookies (loaded from env var)
+COOKIE_PLATFORMS = {"Instagram", "Facebook"}
 
 
-def _get_ydl_opts(output_dir: str, use_cookies: bool = False) -> dict:
+def _write_cookies_to_tempfile() -> str | None:
+    """
+    Decode INSTAGRAM_COOKIES env var (base64) and write to a temp file.
+    Returns the temp file path, or None if env var is not set.
+    """
+    raw = os.environ.get("INSTAGRAM_COOKIES", "").strip()
+    if not raw:
+        return None
+    try:
+        decoded = base64.b64decode(raw).decode("utf-8")
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, prefix="cookies_"
+        )
+        tmp.write(decoded)
+        tmp.flush()
+        tmp.close()
+        return tmp.name
+    except Exception:
+        return None
+
+
+def _get_ydl_opts(output_dir: str, cookies_path: str | None = None) -> dict:
     opts = {
         "format": (
             "bestvideo[ext=mp4][filesize<45M]+bestaudio[ext=m4a]/"
@@ -38,34 +59,40 @@ def _get_ydl_opts(output_dir: str, use_cookies: bool = False) -> dict:
         "retries": 5,
         "fragment_retries": 5,
     }
-
-    # Only inject cookies for platforms that actually need them
-    if use_cookies and os.path.exists(COOKIES_FILE):
-        opts["cookiefile"] = COOKIES_FILE
-
+    if cookies_path:
+        opts["cookiefile"] = cookies_path
     return opts
 
 
 def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
     """
-    Download a video from any supported platform.
-    Cookies are only used for Instagram and Facebook.
+    Download video from any supported platform.
+    YouTube / TikTok / Twitter  → no cookies needed.
+    Instagram / Facebook        → cookies loaded from INSTAGRAM_COOKIES env var.
     """
-    needs_cookies = platform in COOKIE_REQUIRED_PLATFORMS
-    ydl_opts = _get_ydl_opts(output_dir, use_cookies=needs_cookies)
+    cookies_path = None
+    if platform in COOKIE_PLATFORMS:
+        cookies_path = _write_cookies_to_tempfile()
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info     = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
+    ydl_opts = _get_ydl_opts(output_dir, cookies_path)
 
-        base, _ = os.path.splitext(filename)
-        for ext in ("mp4", "mkv", "webm", "mov", "avi"):
-            candidate = f"{base}.{ext}"
-            if os.path.exists(candidate):
-                return candidate
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info     = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
-        if os.path.exists(filename):
-            return filename
+            base, _ = os.path.splitext(filename)
+            for ext in ("mp4", "mkv", "webm", "mov", "avi"):
+                candidate = f"{base}.{ext}"
+                if os.path.exists(candidate):
+                    return candidate
+
+            if os.path.exists(filename):
+                return filename
+    finally:
+        # Clean up the temp cookies file
+        if cookies_path and os.path.exists(cookies_path):
+            os.unlink(cookies_path)
 
     return None
 

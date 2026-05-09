@@ -1,14 +1,7 @@
 __pycache__/
 *.pyc
-*.pyo
 .env
-
-# NEVER commit cookies — contains your private login session!
 cookies.txt
-
-# Downloaded video files
 *.mp4
 *.mkv
 *.webm
-*.avi
-*.mov
