@@ -152,7 +152,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
             loop       = asyncio.get_event_loop()
-            video_path = await loop.run_in_executor(None, download_video, user_text, tmp_dir)
+            video_path = await loop.run_in_executor(None, download_video, user_text, tmp_dir, platform)
 
             if video_path is None or not os.path.exists(video_path):
                 await status_msg.edit_text(

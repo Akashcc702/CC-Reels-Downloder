@@ -4,13 +4,13 @@ import yt_dlp
 MAX_FILE_SIZE_MB    = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-# Path to Instagram/Facebook cookies file
-# Export from your browser using the "Get cookies.txt LOCALLY" Chrome extension
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
 
+# Platforms that need cookies to download (login-walled)
+COOKIE_REQUIRED_PLATFORMS = {"Instagram", "Facebook"}
 
-def _get_ydl_opts(output_dir: str) -> dict:
-    """Build yt-dlp options, injecting cookies if cookies.txt is present."""
+
+def _get_ydl_opts(output_dir: str, use_cookies: bool = False) -> dict:
     opts = {
         "format": (
             "bestvideo[ext=mp4][filesize<45M]+bestaudio[ext=m4a]/"
@@ -23,7 +23,6 @@ def _get_ydl_opts(output_dir: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "restrictfilenames": True,
-        # Mimic a real browser to avoid bot-detection blocks
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -40,21 +39,20 @@ def _get_ydl_opts(output_dir: str) -> dict:
         "fragment_retries": 5,
     }
 
-    # Inject cookies for Instagram, Facebook, Twitter etc.
-    if os.path.exists(COOKIES_FILE):
+    # Only inject cookies for platforms that actually need them
+    if use_cookies and os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
 
     return opts
 
 
-def download_video(url: str, output_dir: str) -> str | None:
+def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
     """
-    Download a video from any supported platform using yt-dlp.
-    Returns the path to the downloaded file, or None on failure.
-
-    Supported: YouTube, Instagram, TikTok, Twitter/X, Facebook, and 1000+ sites.
+    Download a video from any supported platform.
+    Cookies are only used for Instagram and Facebook.
     """
-    ydl_opts = _get_ydl_opts(output_dir)
+    needs_cookies = platform in COOKIE_REQUIRED_PLATFORMS
+    ydl_opts = _get_ydl_opts(output_dir, use_cookies=needs_cookies)
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info     = ydl.extract_info(url, download=True)
