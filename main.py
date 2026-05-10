@@ -46,15 +46,16 @@ PLATFORMS = {
         re.IGNORECASE
     ),
     "TikTok": re.compile(
-        r"(https?://)?(www\.|vm\.)?tiktok\.com/",
+        r"(https?://)?(www\.|vm\.|vt\.)?tiktok\.com/[@/]?[a-zA-Z0-9_@./-]+",
         re.IGNORECASE
     ),
     "Twitter/X": re.compile(
-        r"(https?://)?(www\.)?(twitter\.com|x\.com)/\w+/status/\d+",
+        r"(https?://)?(www\.)?(twitter\.com|x\.com)/",
         re.IGNORECASE
     ),
     "Facebook": re.compile(
-        r"(https?://)?(www\.|web\.|m\.)?facebook\.com/.+/videos?/|"
+        r"(https?://)?(www\.|web\.|m\.)?facebook\.com/"
+        r"(share/[rv]/|.+/videos?/|watch|reel/|story\.php|permalink/)|"
         r"(https?://)?fb\.watch/",
         re.IGNORECASE
     ),
