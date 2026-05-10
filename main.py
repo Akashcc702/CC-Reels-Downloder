@@ -189,6 +189,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 msg = "🌍 *Region-locked!* Not available in server's region."
             elif "http error 429" in err or "too many requests" in err:
                 msg = "⏳ *Rate limited!* Please wait a minute and try again."
+            elif "timed out" in err:
+                msg = "⏳ *Download timed out!*\n\nThe video took too long to download.\nTry a shorter video or try again later."
             else:
                 msg = f"❌ *Download error:*\n`{str(e)[:300]}`"
             await status_msg.edit_text(msg, parse_mode="Markdown")

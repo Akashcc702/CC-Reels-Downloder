@@ -3,6 +3,7 @@ import shutil
 import base64
 import tempfile
 import logging
+import signal
 import yt_dlp
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE_MB    = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 COOKIE_PLATFORMS    = {"Instagram", "Facebook"}
+DOWNLOAD_TIMEOUT    = 90   # seconds — kills stuck downloads
 
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
@@ -36,20 +38,8 @@ def load_cookies_to_tempfile() -> str | None:
 
 
 def _format(platform: str) -> str:
-    """
-    Choose yt-dlp format string.
-    If ffmpeg is NOT available → download pre-merged mp4 only (no merging needed).
-    If ffmpeg IS available     → download best video+audio separately and merge.
-    """
     if not FFMPEG_AVAILABLE:
-        # Single-file formats — no ffmpeg required
-        return (
-            "best[ext=mp4][filesize<45M]/"
-            "best[filesize<45M]/"
-            "worst[ext=mp4]/"
-            "worst"
-        )
-    # Separate streams + merge via ffmpeg — best quality
+        return "best[ext=mp4][filesize<45M]/best[filesize<45M]/worst[ext=mp4]/worst"
     return (
         "bestvideo[ext=mp4][filesize<45M]+bestaudio[ext=m4a]/"
         "best[ext=mp4][filesize<45M]/"
@@ -63,8 +53,8 @@ def _get_ydl_opts(output_dir: str, platform: str = "", cookies_path: str | None 
         "format": _format(platform),
         "outtmpl": os.path.join(output_dir, "%(title).60s.%(ext)s"),
         "restrictfilenames": True,
-        "quiet": False,
-        "no_warnings": False,
+        "quiet": True,
+        "no_warnings": True,
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Linux; Android 12; Pixel 6) "
@@ -73,21 +63,19 @@ def _get_ydl_opts(output_dir: str, platform: str = "", cookies_path: str | None 
             ),
             "Accept-Language": "en-US,en;q=0.9",
         },
-        "retries": 5,
-        "fragment_retries": 5,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
     }
 
     if FFMPEG_AVAILABLE:
         opts["merge_output_format"] = "mp4"
-        opts["postprocessors"] = [{
-            "key": "FFmpegVideoConvertor",
-            "preferedformat": "mp4",
-        }]
+        opts["postprocessors"] = [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}]
 
-    # YouTube: android client to bypass bot-detection on server IPs
+    # YouTube: try android first, then web as fallback
     if platform == "YouTube":
         opts["extractor_args"] = {
-            "youtube": {"player_client": ["android"]}
+            "youtube": {"player_client": ["android", "web"]}
         }
 
     if cookies_path:
@@ -96,12 +84,24 @@ def _get_ydl_opts(output_dir: str, platform: str = "", cookies_path: str | None 
     return opts
 
 
+class TimeoutError(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise TimeoutError("Download timed out")
+
+
 def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
     cookies_path = None
     if platform in COOKIE_PLATFORMS:
         cookies_path = load_cookies_to_tempfile()
 
     ydl_opts = _get_ydl_opts(output_dir, platform, cookies_path)
+
+    # Set alarm — kills the download if it takes too long
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(DOWNLOAD_TIMEOUT)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -117,11 +117,16 @@ def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
             if os.path.exists(filename):
                 return filename
 
-            # Fallback: find any video file in the directory
+            # Fallback: any video file in the temp dir
             for f in os.listdir(output_dir):
                 if f.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi")):
                     return os.path.join(output_dir, f)
+
+    except TimeoutError:
+        logger.warning("Download timed out after %ds: %s", DOWNLOAD_TIMEOUT, url)
+        raise yt_dlp.utils.DownloadError("Download timed out (90s limit)")
     finally:
+        signal.alarm(0)   # Cancel alarm
         if cookies_path and os.path.exists(cookies_path):
             os.unlink(cookies_path)
 
