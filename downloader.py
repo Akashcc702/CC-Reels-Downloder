@@ -1,16 +1,19 @@
 import os
+import json
 import shutil
 import base64
 import tempfile
 import logging
-import yt_dlp
+import subprocess
 
 logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE_MB    = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 COOKIE_PLATFORMS    = {"Instagram", "Facebook"}
+DOWNLOAD_TIMEOUT    = 90          # subprocess is ACTUALLY killed after this
 FFMPEG_AVAILABLE    = shutil.which("ffmpeg") is not None
+YTDLP_PATH          = shutil.which("yt-dlp") or "yt-dlp"
 
 
 def load_cookies_to_tempfile() -> str | None:
@@ -34,78 +37,92 @@ def load_cookies_to_tempfile() -> str | None:
         return None
 
 
-def _get_ydl_opts(output_dir: str, platform: str = "", cookies_path: str | None = None) -> dict:
+def _build_cmd(url: str, output_dir: str, platform: str, cookies_path: str | None) -> list[str]:
+    """Build yt-dlp CLI command."""
     if FFMPEG_AVAILABLE:
         fmt = (
-            "bestvideo[ext=mp4][filesize<45M]+bestaudio[ext=m4a]/"
-            "best[ext=mp4][filesize<45M]/best[filesize<45M]/best"
+            "bestvideo[ext=mp4][filesize<40M]+bestaudio[ext=m4a]/"
+            "best[ext=mp4][filesize<40M]/best[filesize<40M]/best"
         )
     else:
-        fmt = "best[ext=mp4][filesize<45M]/best[filesize<45M]/worst[ext=mp4]/worst"
+        fmt = "best[ext=mp4][filesize<40M]/best[filesize<40M]/worst[ext=mp4]/worst"
 
-    opts = {
-        "format": fmt,
-        "outtmpl": os.path.join(output_dir, "%(title).60s.%(ext)s"),
-        "restrictfilenames": True,
-        "quiet": True,
-        "no_warnings": True,
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 12; Pixel 6) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.6367.82 Mobile Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-        "socket_timeout": 20,
-        "retries": 3,
-        "fragment_retries": 3,
-    }
+    cmd = [
+        YTDLP_PATH,
+        "--format", fmt,
+        "--output", os.path.join(output_dir, "%(title).60s.%(ext)s"),
+        "--restrict-filenames",
+        "--no-playlist",
+        "--socket-timeout", "15",
+        "--retries", "2",
+        "--fragment-retries", "2",
+        "--quiet",
+        "--no-warnings",
+        "--user-agent",
+        "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36",
+    ]
 
     if FFMPEG_AVAILABLE:
-        opts["merge_output_format"] = "mp4"
-        opts["postprocessors"] = [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}]
+        cmd += ["--merge-output-format", "mp4",
+                "--postprocessor-args", "FFmpegVideoConvertor:-vcodec copy -acodec copy"]
 
     if platform == "YouTube":
-        opts["extractor_args"] = {
-            "youtube": {"player_client": ["android", "web"]}
-        }
+        cmd += ["--extractor-args", "youtube:player_client=android,web"]
 
     if cookies_path:
-        opts["cookiefile"] = cookies_path
+        cmd += ["--cookies", cookies_path]
 
-    return opts
+    cmd.append(url)
+    return cmd
 
 
 def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
-    """Download video — called inside a thread via run_in_executor."""
+    """
+    Download using yt-dlp as a subprocess.
+    The process is ACTUALLY killed after DOWNLOAD_TIMEOUT seconds.
+    """
     cookies_path = None
     if platform in COOKIE_PLATFORMS:
         cookies_path = load_cookies_to_tempfile()
 
+    cmd = _build_cmd(url, output_dir, platform, cookies_path)
+    logger.info("Running: %s", " ".join(cmd[:6]) + " ...")
+
     try:
-        ydl_opts = _get_ydl_opts(output_dir, platform, cookies_path)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info     = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
+        result = subprocess.run(
+            cmd,
+            timeout=DOWNLOAD_TIMEOUT,
+            capture_output=True,
+            text=True,
+        )
 
-            base, _ = os.path.splitext(filename)
-            for ext in ("mp4", "mkv", "webm", "mov", "avi"):
-                candidate = f"{base}.{ext}"
-                if os.path.exists(candidate):
-                    return candidate
+        if result.returncode != 0:
+            err = result.stderr.strip()
+            logger.warning("yt-dlp error (code %d): %s", result.returncode, err[:300])
+            # Re-raise as DownloadError so handle_message catches it properly
+            raise _make_download_error(err)
 
-            if os.path.exists(filename):
-                return filename
+        # Find the downloaded file
+        for f in sorted(os.listdir(output_dir)):
+            if f.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi")):
+                return os.path.join(output_dir, f)
 
-            for f in os.listdir(output_dir):
-                if f.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi")):
-                    return os.path.join(output_dir, f)
+        logger.error("yt-dlp succeeded but no video file found in %s", output_dir)
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.warning("Download killed after %ds: %s", DOWNLOAD_TIMEOUT, url)
+        raise _make_download_error("timed out")
     finally:
         if cookies_path and os.path.exists(cookies_path):
             os.unlink(cookies_path)
 
-    return None
+
+def _make_download_error(msg: str):
+    """Wrap a string as a yt-dlp DownloadError."""
+    import yt_dlp
+    err = yt_dlp.utils.DownloadError(msg)
+    return err
 
 
 def get_file_size_mb(path: str) -> float:

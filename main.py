@@ -136,20 +136,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         try:
-            loop = asyncio.get_event_loop()
-            try:
-                video_path = await asyncio.wait_for(
-                    loop.run_in_executor(None, download_video, user_text, tmp_dir, platform),
-                    timeout=90.0
-                )
-            except asyncio.TimeoutError:
-                await status_msg.edit_text(
-                    "⏳ *Download timed out!*\n\n"
-                    "The video took too long (90s limit).\n"
-                    "Try a shorter video or try again.",
-                    parse_mode="Markdown"
-                )
-                return
+            loop       = asyncio.get_event_loop()
+            video_path = await loop.run_in_executor(
+                None, download_video, user_text, tmp_dir, platform
+            )
 
             if video_path is None or not os.path.exists(video_path):
                 extra = (
