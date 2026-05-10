@@ -9,7 +9,7 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-from downloader import download_video, get_file_size_mb, is_too_large
+from downloader import download_video, get_file_size_mb, is_too_large, cookies_status
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -71,34 +71,43 @@ def detect_platform(text: str) -> str | None:
             return name
     return None
 
-# ─── Command Handlers ─────────────────────────────────────────────────────────
+# ─── Commands ─────────────────────────────────────────────────────────────────
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    ig_ready = "✅" if os.environ.get("INSTAGRAM_COOKIES") else "⚠️ (cookies not set)"
+    ig_status = "✅" if os.environ.get("INSTAGRAM_COOKIES") else "⚠️ cookies not set"
     await update.message.reply_text(
-        "👋 *Welcome to Video Downloader Bot!*\n\n"
-        "Supported platforms:\n"
-        f"▶️ *YouTube* (Shorts, Music) — ✅\n"
-        f"🎵 *TikTok* — ✅\n"
-        f"🐦 *Twitter / X* — ✅\n"
-        f"📸 *Instagram* (Reels, Posts) — {ig_ready}\n"
-        f"📘 *Facebook* — {ig_ready}\n\n"
-        "📌 Just send a link to download!\n\n"
-        "⚠️ *Limits:* Max 50 MB, public videos only.",
+        "👋 *Video Downloader Bot*\n\n"
+        "▶️ YouTube & Shorts — ✅\n"
+        "🎵 TikTok — ✅\n"
+        "🐦 Twitter / X — ✅\n"
+        f"📸 Instagram — {ig_status}\n"
+        f"📘 Facebook — {ig_status}\n\n"
+        "Just send a link!\n"
+        "Use /debug to check bot status.",
         parse_mode="Markdown"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📖 *Help*\n\n"
-        "/start — Welcome message\n"
-        "/help — This message\n\n"
+        "/start — Welcome\n"
+        "/help — This message\n"
+        "/debug — Check cookies & bot status\n\n"
         "*Instagram not working?*\n"
-        "Set `INSTAGRAM_COOKIES` in Render → Environment Variables.\n"
+        "Set `INSTAGRAM_COOKIES` in Render → Environment.\n"
         "See `HOW_TO_FIX_INSTAGRAM.md` for steps.\n\n"
-        "*Troubleshooting:*\n"
-        "• Video must be public\n"
-        "• File must be under 50 MB\n"
-        "• Some videos are region-locked\n",
+        "*Limits:* Max 50 MB, public videos only.",
+        parse_mode="Markdown"
+    )
+
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current bot configuration status."""
+    import yt_dlp
+    status = cookies_status()
+    await update.message.reply_text(
+        f"🔍 *Bot Debug Info*\n\n"
+        f"*Instagram Cookies:*\n{status}\n\n"
+        f"*yt-dlp version:* `{yt_dlp.version.__version__}`\n"
+        f"*Telegram Bot Token:* {'✅ set' if os.environ.get('TELEGRAM_BOT_TOKEN') else '❌ not set'}\n",
         parse_mode="Markdown"
     )
 
@@ -113,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "❌ *Unsupported link!*\n\n"
             "Supported: YouTube, Instagram, TikTok, Twitter/X, Facebook\n"
-            "Send /help for info.",
+            "Use /help for info.",
             parse_mode="Markdown"
         )
         return
@@ -132,10 +141,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
 
             if video_path is None or not os.path.exists(video_path):
+                extra = (
+                    "\n\n📌 Use /debug to check Instagram cookie status."
+                    if platform in ("Instagram", "Facebook") else ""
+                )
                 await status_msg.edit_text(
-                    "❌ *Download failed!*\n\n"
-                    "Content may be private, removed, or region-locked.\n"
-                    "For Instagram: set `INSTAGRAM_COOKIES` env var — see /help",
+                    f"❌ *Download failed!*\n\n"
+                    f"Content may be private, removed, or region-locked.{extra}",
                     parse_mode="Markdown"
                 )
                 return
@@ -167,13 +179,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if any(k in err for k in ["private", "login", "sign in", "cookie", "auth"]):
                 msg = (
                     "🔒 *Login required!*\n\n"
-                    "Set `INSTAGRAM_COOKIES` in Render Environment Variables.\n"
-                    "See /help for steps."
+                    "Use /debug to check cookie status.\n"
+                    "See /help → HOW_TO_FIX_INSTAGRAM.md for setup."
                 )
             elif any(k in err for k in ["not available", "removed", "deleted"]):
-                msg = "🚫 *Content unavailable!* Video has been removed."
+                msg = "🚫 *Content unavailable!* Video may have been removed."
             elif any(k in err for k in ["geo", "region", "country"]):
                 msg = "🌍 *Region-locked!* Not available in server's region."
+            elif "http error 429" in err or "too many requests" in err:
+                msg = "⏳ *Rate limited!* Please wait a minute and try again."
             else:
                 msg = f"❌ *Download error:*\n`{str(e)[:300]}`"
             await status_msg.edit_text(msg, parse_mode="Markdown")
@@ -193,11 +207,12 @@ def main() -> None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
 
     keep_alive()
-    logger.info("Starting Video Downloader Bot...")
+    logger.info("Bot starting... Cookies: %s", cookies_status())
 
     bot_app = ApplicationBuilder().token(token).build()
     bot_app.add_handler(CommandHandler("start", start_command))
     bot_app.add_handler(CommandHandler("help", help_command))
+    bot_app.add_handler(CommandHandler("debug", debug_command))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Bot is running!")
