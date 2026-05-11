@@ -10,15 +10,26 @@ logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE_MB    = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-COOKIE_PLATFORMS    = {"Instagram", "Facebook"}
+COOKIE_PLATFORMS    = {"Instagram", "Facebook", "YouTube", "TikTok", "Twitter/X"}
 DOWNLOAD_TIMEOUT    = 90          # subprocess is ACTUALLY killed after this
 FFMPEG_AVAILABLE    = shutil.which("ffmpeg") is not None
 YTDLP_PATH          = shutil.which("yt-dlp") or "yt-dlp"
 
 
-def load_cookies_to_tempfile() -> str | None:
-    raw = os.environ.get("INSTAGRAM_COOKIES", "").strip()
+# Map platform → env var name
+COOKIE_ENV_VARS = {
+    "Instagram": "INSTAGRAM_COOKIES",
+    "Facebook":  "INSTAGRAM_COOKIES",   # reuse same cookies
+    "YouTube":   "YOUTUBE_COOKIES",
+    "TikTok":    "TIKTOK_COOKIES",
+    "Twitter/X": "TWITTER_COOKIES",
+}
+
+def load_cookies_to_tempfile(platform: str = "Instagram") -> str | None:
+    env_key = COOKIE_ENV_VARS.get(platform, "INSTAGRAM_COOKIES")
+    raw = os.environ.get(env_key, "").strip()
     if not raw:
+        logger.info("No cookies set for %s (%s)", platform, env_key)
         return None
     try:
         try:
@@ -27,13 +38,15 @@ def load_cookies_to_tempfile() -> str | None:
             decoded = raw
         if "Netscape HTTP Cookie File" not in decoded:
             decoded = "# Netscape HTTP Cookie File\n" + decoded
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="ig_")
+        prefix = platform.lower().replace("/", "_") + "_"
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix=prefix)
         tmp.write(decoded)
         tmp.flush()
         tmp.close()
+        logger.info("Cookies loaded for %s from %s", platform, env_key)
         return tmp.name
     except Exception as e:
-        logger.error("Cookies load failed: %s", e)
+        logger.error("Cookies load failed for %s: %s", platform, e)
         return None
 
 
@@ -92,7 +105,7 @@ def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
     """
     cookies_path = None
     if platform in COOKIE_PLATFORMS:
-        cookies_path = load_cookies_to_tempfile()
+        cookies_path = load_cookies_to_tempfile(platform)
 
     cmd = _build_cmd(url, output_dir, platform, cookies_path)
     logger.info("Running: %s", " ".join(cmd[:6]) + " ...")
@@ -140,18 +153,33 @@ def get_file_size_mb(path: str) -> float:
 def is_too_large(path: str) -> bool:
     return os.path.getsize(path) > MAX_FILE_SIZE_BYTES
 
-def cookies_status() -> str:
-    raw = os.environ.get("INSTAGRAM_COOKIES", "").strip()
-    if not raw:
-        return "❌ INSTAGRAM_COOKIES not set"
+def _decode_cookies(raw: str) -> tuple[str, str]:
+    """Returns (decoded_text, format_label)."""
     try:
-        try:
-            decoded = base64.b64decode(raw).decode("utf-8")
-            fmt = "base64"
-        except Exception:
-            decoded = raw
-            fmt = "plain text"
-        lines = [l for l in decoded.splitlines() if l.strip() and not l.startswith("#")]
-        return f"✅ Loaded ({fmt}), {len(lines)} cookie entries"
-    except Exception as e:
-        return f"❌ Error: {e}"
+        decoded = base64.b64decode(raw).decode("utf-8")
+        return decoded, "base64"
+    except Exception:
+        return raw, "plain text"
+
+def cookies_status() -> str:
+    lines = []
+    checks = [
+        ("📸 Instagram", "INSTAGRAM_COOKIES", "sessionid"),
+        ("▶️ YouTube",   "YOUTUBE_COOKIES",   ""),
+        ("🎵 TikTok",    "TIKTOK_COOKIES",    ""),
+        ("🐦 Twitter/X", "TWITTER_COOKIES",   ""),
+    ]
+    for label, env_key, required_cookie in checks:
+        raw = os.environ.get(env_key, "").strip()
+        if not raw:
+            lines.append(f"{label}: ❌ not set")
+        else:
+            decoded, fmt = _decode_cookies(raw)
+            entries = [l for l in decoded.splitlines() if l.strip() and not l.startswith("#")]
+            if required_cookie:
+                has_req = any(required_cookie in l for l in decoded.splitlines())
+                req_icon = "✅" if has_req else f"⚠️ {required_cookie} missing"
+                lines.append(f"{label}: ✅ {len(entries)} entries | {req_icon}")
+            else:
+                lines.append(f"{label}: ✅ {len(entries)} entries")
+    return "\n".join(lines)

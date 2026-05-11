@@ -9,3 +9,9 @@ services:
         sync: false
       - key: INSTAGRAM_COOKIES
         sync: false
+      - key: YOUTUBE_COOKIES
+        sync: false
+      - key: TIKTOK_COOKIES
+        sync: false
+      - key: TWITTER_COOKIES
+        sync: false
