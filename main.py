@@ -9,7 +9,7 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-from downloader import download_video, get_file_size_mb, is_too_large, cookies_status
+from downloader import download_video, get_file_size_mb, is_too_large, cookies_status, FFMPEG_AVAILABLE
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -30,7 +30,7 @@ def keep_alive():
         try:
             flask_app.run(host="0.0.0.0", port=port)
         except OSError as e:
-            logger.warning("Web server could not start on port %d: %s", port, e)
+            logger.warning("Web server port %d: %s", port, e)
     Thread(target=run, daemon=True).start()
 
 # ─── Platform Detection ───────────────────────────────────────────────────────
@@ -42,7 +42,8 @@ PLATFORMS = {
         re.IGNORECASE
     ),
     "Instagram": re.compile(
-        r"(https?://)?(www\.)?instagram\.com/(p|reel|tv|reels)/[a-zA-Z0-9_-]+",
+        r"(https?://)?(www\.)?instagram\.com/"
+        r"([a-zA-Z0-9_.]+/)?(p|reel|tv|reels)/[a-zA-Z0-9_-]+",
         re.IGNORECASE
     ),
     "TikTok": re.compile(
@@ -94,23 +95,47 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help — This message\n"
         "/debug — Check cookies & bot status\n\n"
         "*Instagram not working?*\n"
-        "Set `INSTAGRAM_COOKIES` in Render → Environment.\n"
-        "See `HOW_TO_FIX_INSTAGRAM.md` for steps.\n\n"
+        "Set `INSTAGRAM_COOKIES` in Render → Environment.\n\n"
         "*Limits:* Max 50 MB, public videos only.",
         parse_mode="Markdown"
     )
 
 async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show current bot configuration status."""
     import yt_dlp
+    from downloader import FFMPEG_AVAILABLE
     status = cookies_status()
     await update.message.reply_text(
         f"🔍 *Bot Debug Info*\n\n"
-        f"*Instagram Cookies:*\n{status}\n\n"
+        f"*ffmpeg:* {'✅ available' if FFMPEG_AVAILABLE else '❌ not found'}\n"
+        f"*Instagram Cookies:* {status}\n"
         f"*yt-dlp version:* `{yt_dlp.version.__version__}`\n"
-        f"*Telegram Bot Token:* {'✅ set' if os.environ.get('TELEGRAM_BOT_TOKEN') else '❌ not set'}\n",
+        f"*Token:* {'✅ set' if os.environ.get('TELEGRAM_BOT_TOKEN') else '❌ not set'}\n",
         parse_mode="Markdown"
     )
+
+# ─── Live progress updater ────────────────────────────────────────────────────
+async def _progress_updater(status_msg, emoji: str, platform: str, stop_event: asyncio.Event):
+    """Edit the status message every 20s so user knows it's still working."""
+    dots  = ["⏳", "⌛"]
+    steps = [20, 20, 20, 10]   # update at 20s, 40s, 60s, 70s
+    msgs  = [
+        f"{emoji} *Downloading from {platform}...*\n⏳ Still working... (20s)",
+        f"{emoji} *Downloading from {platform}...*\n⌛ Almost there... (40s)",
+        f"{emoji} *Downloading from {platform}...*\n⏳ Processing... (60s)",
+        f"{emoji} *Downloading from {platform}...*\n⌛ Finalizing... (70s)",
+    ]
+    for wait, msg in zip(steps, msgs):
+        try:
+            await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=wait)
+            return   # download finished — stop updating
+        except asyncio.TimeoutError:
+            pass
+        if stop_event.is_set():
+            return
+        try:
+            await status_msg.edit_text(msg, parse_mode="Markdown")
+        except Exception:
+            pass
 
 # ─── Main Message Handler ─────────────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -135,53 +160,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        stop_event = asyncio.Event()
+        # Start live progress updater in background
+        progress_task = asyncio.create_task(
+            _progress_updater(status_msg, emoji, platform, stop_event)
+        )
+
         try:
             loop       = asyncio.get_event_loop()
             video_path = await loop.run_in_executor(
                 None, download_video, user_text, tmp_dir, platform
             )
-
-            if video_path is None or not os.path.exists(video_path):
-                extra = (
-                    "\n\n📌 Use /debug to check Instagram cookie status."
-                    if platform in ("Instagram", "Facebook") else ""
-                )
-                await status_msg.edit_text(
-                    f"❌ *Download failed!*\n\n"
-                    f"Content may be private, removed, or region-locked.{extra}",
-                    parse_mode="Markdown"
-                )
-                return
-
-            file_size_mb = get_file_size_mb(video_path)
-            if is_too_large(video_path):
-                await status_msg.edit_text(
-                    f"⚠️ *File too large!* ({file_size_mb:.1f} MB)\n"
-                    "Telegram limit is 50 MB. Try a shorter clip.",
-                    parse_mode="Markdown"
-                )
-                return
-
-            await status_msg.edit_text("📤 *Uploading to Telegram...*", parse_mode="Markdown")
-
-            with open(video_path, "rb") as vf:
-                await update.message.reply_video(
-                    video=vf,
-                    caption=f"✅ Done! ({file_size_mb:.1f} MB)",
-                    supports_streaming=True,
-                    read_timeout=120,
-                    write_timeout=120,
-                    connect_timeout=30,
-                )
-            await status_msg.delete()
-
         except yt_dlp.utils.DownloadError as e:
+            stop_event.set()
+            progress_task.cancel()
             err = str(e).lower()
             if any(k in err for k in ["private", "login", "sign in", "cookie", "auth"]):
                 msg = (
                     "🔒 *Login required!*\n\n"
                     "Use /debug to check cookie status.\n"
-                    "See /help → HOW_TO_FIX_INSTAGRAM.md for setup."
+                    "See /help for setup."
+                )
+            elif "timed out" in err:
+                msg = (
+                    "⏳ *Download timed out!*\n\n"
+                    "Video took too long (90s limit).\n"
+                    "Try a shorter video or try again later."
                 )
             elif any(k in err for k in ["not available", "removed", "deleted"]):
                 msg = "🚫 *Content unavailable!* Video may have been removed."
@@ -189,19 +193,56 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 msg = "🌍 *Region-locked!* Not available in server's region."
             elif "http error 429" in err or "too many requests" in err:
                 msg = "⏳ *Rate limited!* Please wait a minute and try again."
-            elif "timed out" in err:
-                msg = "⏳ *Download timed out!*\n\nThe video took too long to download.\nTry a shorter video or try again later."
             else:
                 msg = f"❌ *Download error:*\n`{str(e)[:300]}`"
             await status_msg.edit_text(msg, parse_mode="Markdown")
             logger.warning("DownloadError for %s: %s", user_text, e)
+            return
 
         except Exception as e:
+            stop_event.set()
+            progress_task.cancel()
             await status_msg.edit_text(
                 "⚠️ *Unexpected error!* Please try again later.",
                 parse_mode="Markdown"
             )
             logger.error("Error for %s: %s", user_text, e, exc_info=True)
+            return
+
+        finally:
+            stop_event.set()
+
+        # ── Upload ────────────────────────────────────────────────────────────
+        if video_path is None or not os.path.exists(video_path):
+            extra = "\n\n📌 Use /debug to check Instagram cookie status." \
+                    if platform in ("Instagram", "Facebook") else ""
+            await status_msg.edit_text(
+                f"❌ *Download failed!*\n\nContent may be private or unavailable.{extra}",
+                parse_mode="Markdown"
+            )
+            return
+
+        file_size_mb = get_file_size_mb(video_path)
+        if is_too_large(video_path):
+            await status_msg.edit_text(
+                f"⚠️ *File too large!* ({file_size_mb:.1f} MB)\n"
+                "Telegram limit is 50 MB. Try a shorter clip.",
+                parse_mode="Markdown"
+            )
+            return
+
+        await status_msg.edit_text("📤 *Uploading to Telegram...*", parse_mode="Markdown")
+
+        with open(video_path, "rb") as vf:
+            await update.message.reply_video(
+                video=vf,
+                caption=f"✅ Done! ({file_size_mb:.1f} MB)",
+                supports_streaming=True,
+                read_timeout=120,
+                write_timeout=120,
+                connect_timeout=30,
+            )
+        await status_msg.delete()
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 def main() -> None:
@@ -210,7 +251,7 @@ def main() -> None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
 
     keep_alive()
-    logger.info("Bot starting... Cookies: %s", cookies_status())
+    logger.info("Bot starting... ffmpeg=%s cookies=%s", FFMPEG_AVAILABLE, cookies_status())
 
     bot_app = ApplicationBuilder().token(token).build()
     bot_app.add_handler(CommandHandler("start", start_command))
@@ -219,7 +260,10 @@ def main() -> None:
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Bot is running!")
-    bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
+    bot_app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,   # clear old updates on restart
+    )
 
 if __name__ == "__main__":
     main()

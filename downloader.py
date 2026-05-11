@@ -69,6 +69,15 @@ def _build_cmd(url: str, output_dir: str, platform: str, cookies_path: str | Non
     if platform == "YouTube":
         cmd += ["--extractor-args", "youtube:player_client=android,web"]
 
+    # Instagram needs specific app headers
+    if platform in ("Instagram", "Facebook"):
+        cmd += [
+            "--add-header", "X-IG-App-ID:936619743392459",
+            "--add-header", "X-ASBD-ID:129477",
+            "--add-header", "Origin:https://www.instagram.com",
+            "--add-header", "Referer:https://www.instagram.com/",
+        ]
+
     if cookies_path:
         cmd += ["--cookies", cookies_path]
 
