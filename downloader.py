@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE_MB    = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-COOKIE_PLATFORMS    = {"Instagram", "Facebook", "YouTube", "TikTok", "Twitter/X"}
+COOKIE_PLATFORMS    = {"Instagram", "Facebook", "TikTok", "Twitter/X"}
 DOWNLOAD_TIMEOUT    = 90          # subprocess is ACTUALLY killed after this
 FFMPEG_AVAILABLE    = shutil.which("ffmpeg") is not None
 YTDLP_PATH          = shutil.which("yt-dlp") or "yt-dlp"
@@ -80,7 +80,12 @@ def _build_cmd(url: str, output_dir: str, platform: str, cookies_path: str | Non
                 "--postprocessor-args", "FFmpegVideoConvertor:-vcodec copy -acodec copy"]
 
     if platform == "YouTube":
-        cmd += ["--extractor-args", "youtube:player_client=android,web"]
+        cmd += [
+            "--extractor-args",
+            "youtube:player_client=ios,mweb,android,web",
+            "--no-check-certificates",
+            "--geo-bypass",
+        ]
 
     # Instagram needs specific app headers
     if platform in ("Instagram", "Facebook"):
