@@ -82,9 +82,12 @@ def _build_cmd(url: str, output_dir: str, platform: str, cookies_path: str | Non
     if platform == "YouTube":
         cmd += [
             "--extractor-args",
-            "youtube:player_client=ios,mweb,android,web",
+            # tv_embedded & web_creator bypass server IP bot-detection in 2026
+            "youtube:player_client=tv_embedded,web_creator,ios,mweb,web",
             "--no-check-certificates",
             "--geo-bypass",
+            "--add-header", "Accept-Language:en-US,en;q=0.9",
+            "--add-header", "Accept:text/html,application/xhtml+xml,*/*;q=0.8",
         ]
 
     # Instagram needs specific app headers

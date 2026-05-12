@@ -188,7 +188,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "Try a shorter video or try again later."
                 )
             elif any(k in err for k in ["not available", "removed", "deleted"]):
-                msg = "🚫 *Content unavailable!* Video may have been removed."
+                if platform == "YouTube":
+                    msg = (
+                        "🚫 *YouTube block detected!*\n\n"
+                        "YouTube is blocking this server IP.\n"
+                        "Trying different methods... please retry in 1 minute."
+                    )
+                else:
+                    msg = "🚫 *Content unavailable!* Video may have been removed."
             elif any(k in err for k in ["geo", "region", "country"]):
                 msg = "🌍 *Region-locked!* Not available in server's region."
             elif "http error 429" in err or "too many requests" in err:
