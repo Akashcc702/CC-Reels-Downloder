@@ -80,9 +80,15 @@ def _build_cmd(url: str, output_dir: str, platform: str, cookies_path: str | Non
                 "--postprocessor-args", "FFmpegVideoConvertor:-vcodec copy -acodec copy"]
 
     if platform == "YouTube":
+        # With cookies → use "web" client (authenticates properly)
+        # Without cookies → use "tv_embedded" (bypasses bot detection)
+        yt_cookies_set = bool(os.environ.get("YOUTUBE_COOKIES", "").strip())
+        if yt_cookies_set and cookies_path:
+            yt_clients = "web,web_safari,tv_embedded"
+        else:
+            yt_clients = "tv_embedded,web_creator,ios,web"
         cmd += [
-            "--extractor-args",
-            "youtube:player_client=tv_embedded,web_creator,ios,web",
+            "--extractor-args", f"youtube:player_client={yt_clients}",
             "--geo-bypass",
             "--no-check-certificates",
         ]
