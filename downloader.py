@@ -111,9 +111,17 @@ def _build_cmd(url: str, output_dir: str, platform: str, cookies_path: str | Non
 
 def download_video(url: str, output_dir: str, platform: str = "") -> str | None:
     """
-    Download using yt-dlp as a subprocess.
-    The process is ACTUALLY killed after DOWNLOAD_TIMEOUT seconds.
+    YouTube  → Invidious API (bypasses datacenter IP block)
+    Others   → yt-dlp subprocess
     """
+    # YouTube: Invidious first — no bot detection on any cloud IP
+    if platform == "YouTube":
+        logger.info("Trying Invidious API for YouTube...")
+        result = _yt_invidious(url, output_dir)
+        if result:
+            return result
+        logger.warning("All Invidious instances failed — trying yt-dlp fallback")
+
     cookies_path = None
     if platform in COOKIE_PLATFORMS:
         cookies_path = load_cookies_to_tempfile(platform)
