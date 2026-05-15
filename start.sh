@@ -1,15 +1,13 @@
 #!/bin/bash
-# Install ffmpeg if not present
-if ! command -v ffmpeg &> /dev/null; then
-    echo "Installing ffmpeg..."
+echo "Checking ffmpeg..."
+if command -v ffmpeg &> /dev/null; then
+    echo "ffmpeg: $(ffmpeg -version 2>&1 | head -1)"
+else
+    echo "ffmpeg not found, installing..."
     apt-get update -qq && apt-get install -y -qq ffmpeg
 fi
-echo "ffmpeg: $(ffmpeg -version 2>&1 | head -1)"
-
-# Always update yt-dlp to latest (YouTube breaks with old versions)
-echo "Updating yt-dlp..."
+echo "Updating yt-dlp to latest..."
 pip install -q --upgrade yt-dlp
-echo "yt-dlp: $(yt-dlp --version)"
-
+echo "yt-dlp: $(python -m yt_dlp --version)"
 echo "Starting bot..."
 python main.py

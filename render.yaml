@@ -2,8 +2,10 @@ services:
   - type: web
     name: reels-downloader-bot
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: bash start.sh
+    buildCommand: |
+      apt-get update -qq && apt-get install -y -qq ffmpeg
+      pip install -r requirements.txt
+    startCommand: python main.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
